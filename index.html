@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Ghost Mobile Chat v3</title>
+    <title>Ghost Protocol v4</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
     <style>
@@ -13,6 +13,7 @@
             background: #000; color: #0f0; 
             display: flex; flex-direction: column; 
             height: 100dvh; margin: 0; overflow: hidden;
+            transition: box-shadow 0.1s;
         }
 
         header {
@@ -38,21 +39,24 @@
             font-weight: bold; cursor: pointer; border-radius: 3px;
         }
 
-        #chat { flex: 1; overflow-y: auto; padding: 15px; background: #000; font-size: 1rem; }
+        #chat { flex: 1; overflow-y: auto; padding: 15px; background: #000; font-size: 1rem; border: 0px solid #0f0; }
         #chat div { margin-bottom: 8px; line-height: 1.4; }
 
-        .input-group { display: flex; gap: 5px; }
+        /* Brighter Placeholders */
         input {
             flex: 1; background: #000; color: #0f0; border: 1px solid #444;
             padding: 12px; font-size: 16px; border-radius: 4px; font-family: monospace; outline: none;
         }
-        ::placeholder { color: #00ff00; opacity: 0.7; font-weight: bold; }
+        ::placeholder { color: #00ff00; opacity: 1; font-weight: bold; }
         
         button.action-btn { background: #111; color: #0f0; border: 1px solid #0f0; padding: 0 15px; font-weight: bold; border-radius: 4px; }
         button.send-btn { background: #0f0; color: #000; border: none; padding: 0 20px; font-weight: bold; border-radius: 4px; }
 
         footer { padding: 10px; background: #111; border-top: 1px solid #333; }
-        .system-msg { color: #666; font-size: 0.8em; font-style: italic; }
+        .system-msg { color: #666; font-size: 0.8em; }
+
+        /* Receive Blink Animation */
+        .blink { box-shadow: inset 0 0 20px #0f0; }
     </style>
 </head>
 <body>
@@ -67,18 +71,18 @@
         <span>MY ID: <strong id="my-id" style="color:#fff; font-size:1.2em;">...</strong></span>
         <button class="copy-btn" onclick="copyId()">COPY</button>
     </div>
-    <input type="password" id="secret-key" placeholder="SECRET KEY (MUST MATCH)">
+    <input type="password" id="secret-key" placeholder="PASSWORD KEY">
     <div class="input-group">
         <input type="text" id="peer-id-input" placeholder="PARTNER ID">
         <button class="action-btn" onclick="connectToPeer()">LINK</button>
     </div>
 </div>
 
-<div id="chat"><div class="system-msg">> Standing by...</div></div>
+<div id="chat"><div class="system-msg">> Waiting for secure handshake...</div></div>
 
 <footer>
     <div class="input-group">
-        <input type="text" id="message-input" placeholder="Write message..." autocomplete="off">
+        <input type="text" id="message-input" placeholder="Transmit message..." autocomplete="off">
         <button class="send-btn" onclick="sendMessage()">SEND</button>
     </div>
 </footer>
@@ -89,30 +93,37 @@
     let conn;
     let timerStarted = false;
 
-    // --- SOUND ENGINE (Web Audio API) ---
-    function playBeep() {
+    // --- HACKER SOUND ENGINE ---
+    function playHackerSound() {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = 'square'; // Digital sound
-        osc.frequency.setValueAtTime(880, ctx.currentTime); // High pitch A5
-        gain.gain.setValueAtTime(0.1, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.1);
+        
+        const playTone = (freq, start, duration) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(freq, ctx.currentTime + start);
+            gain.gain.setValueAtTime(0.05, ctx.currentTime + start);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + start + duration);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start(ctx.currentTime + start);
+            osc.stop(ctx.currentTime + start + duration);
+        };
+
+        playTone(1200, 0, 0.05);   // Short beep 1
+        playTone(1800, 0.06, 0.08); // Short beep 2 (Higher)
     }
 
-    // --- KEYBOARD LISTENERS ---
+    function visualBlink() {
+        document.body.classList.add('blink');
+        setTimeout(() => document.body.classList.remove('blink'), 150);
+    }
+
+    // Key Listener
     document.getElementById('message-input').addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            sendMessage();
-        }
+        if (e.key === 'Enter') { e.preventDefault(); sendMessage(); }
     });
 
-    // --- PEER LOGIC ---
     peer.on('open', id => document.getElementById('my-id').innerText = id);
     peer.on('connection', c => { conn = c; setupChat(); });
 
@@ -132,16 +143,14 @@
                 const bytes = CryptoJS.AES.decrypt(packet.payload, secret);
                 const text = bytes.toString(CryptoJS.enc.Utf8);
                 if (text) {
-                    playBeep();
+                    playHackerSound();
+                    visualBlink();
                     appendMessage("GHOST", text);
                     if (!timerStarted) startDestructTimer();
                 }
             }
         });
-        conn.on('open', () => {
-            appendMessage("SYSTEM", "SECURE LINK ACTIVE");
-            startDestructTimer();
-        });
+        conn.on('open', () => { appendMessage("SYSTEM", "SECURE TUNNEL OPENED"); startDestructTimer(); });
     }
 
     function sendMessage() {
@@ -151,7 +160,7 @@
         if (conn && conn.open) {
             const enc = CryptoJS.AES.encrypt(input.value, secret).toString();
             conn.send(JSON.stringify({ type: 'msg', payload: enc }));
-            appendMessage("ME", input.value);
+            appendMessage("YOU", input.value);
             input.value = "";
         }
     }
@@ -159,7 +168,7 @@
     function appendMessage(sender, text) {
         const chat = document.getElementById('chat');
         const div = document.createElement('div');
-        const color = sender === "ME" ? "#0f0" : (sender === "SYSTEM" ? "#666" : "#00bcd4");
+        const color = sender === "YOU" ? "#0f0" : (sender === "SYSTEM" ? "#666" : "#00bcd4");
         div.innerHTML = `<strong style="color:${color}">${sender}:</strong> ${text}`;
         chat.appendChild(div);
         chat.scrollTop = chat.scrollHeight;
@@ -167,7 +176,7 @@
 
     function triggerPanic() {
         if (conn && conn.open) conn.send(JSON.stringify({ type: 'panic' }));
-        setTimeout(() => location.reload(), 500);
+        setTimeout(() => location.reload(), 600);
     }
 
     function startDestructTimer() {
