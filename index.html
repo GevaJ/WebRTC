@@ -2,143 +2,276 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-    <title>Ghost Protocol Chat</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Ghost Mobile Chat</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
     <style>
-        body { font-family: 'Courier New', monospace; background: #000; color: #0f0; display: flex; flex-direction: column; height: 100vh; margin: 0; }
-        #chat { flex: 1; overflow-y: auto; padding: 20px; border-bottom: 1px solid #333; }
-        .area { padding: 10px; display: flex; gap: 10px; background: #050505; border-top: 1px solid #222; }
-        input { flex: 1; padding: 10px; background: #000; color: #0f0; border: 1px solid #0f0; outline: none; }
-        button { padding: 10px 15px; cursor: pointer; background: #0f0; color: #000; border: none; font-weight: bold; }
-        .panic-btn { background: #ff0000; color: white; }
-        .status { padding: 10px; font-size: 0.8em; border-bottom: 1px solid #222; display: flex; justify-content: space-between; align-items: center; }
-        ::placeholder { color: #004400; }
+        /* Base Reset & Fonts */
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body { 
+            font-family: 'Courier New', monospace; 
+            background: #000; 
+            color: #0f0; 
+            display: flex; 
+            flex-direction: column; 
+            height: 100dvh; /* Dynamic viewport height for mobile */
+            margin: 0; 
+            overflow: hidden;
+        }
+
+        /* Top Status Bar */
+        header {
+            background: #111;
+            padding: 10px;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.9rem;
+        }
+        .timer { color: red; font-weight: bold; }
+        .panic-btn {
+            background: #d00;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            font-weight: bold;
+            font-size: 0.8rem;
+            border-radius: 4px;
+        }
+
+        /* ID & Connection Area */
+        .config-area {
+            background: #0a0a0a;
+            padding: 10px;
+            border-bottom: 1px solid #222;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .id-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #1a1a1a;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #333;
+        }
+        .copy-btn {
+            background: #0f0;
+            color: #000;
+            border: none;
+            padding: 5px 12px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 0.9rem;
+            border-radius: 3px;
+        }
+
+        /* Chat Window */
+        #chat { 
+            flex: 1; 
+            overflow-y: auto; 
+            padding: 15px; 
+            background: #000;
+            font-size: 1rem;
+            word-wrap: break-word;
+        }
+        #chat div { margin-bottom: 8px; line-height: 1.4; }
+
+        /* Input Controls */
+        .input-group {
+            display: flex;
+            gap: 5px;
+        }
+        input {
+            flex: 1;
+            background: #000;
+            color: #0f0;
+            border: 1px solid #333;
+            padding: 12px; /* Large touch area */
+            font-size: 16px; /* Prevents iOS zoom */
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        button.action-btn {
+            background: #111;
+            color: #0f0;
+            border: 1px solid #0f0;
+            padding: 0 15px;
+            font-weight: bold;
+            border-radius: 4px;
+        }
+        button.send-btn {
+            background: #0f0;
+            color: #000;
+            border: none;
+            padding: 0 20px;
+            font-weight: bold;
+            border-radius: 4px;
+        }
+
+        /* Footer Area */
+        footer {
+            padding: 10px;
+            background: #111;
+            border-top: 1px solid #333;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        /* Visual Tweaks */
+        ::placeholder { color: #004400; opacity: 1; }
+        .system-msg { color: #555; font-size: 0.8em; font-style: italic; }
     </style>
 </head>
 <body>
 
-<div class="status">
-    <div>GHOST ID: <strong id="my-id">...</strong></div>
-    <div id="timer-display" style="color:red; font-weight:bold;">DISCONNECTED</div>
-    <button class="panic-btn" onclick="triggerPanic()">NUCLEAR WIPE</button>
+<header>
+    <div id="timer-display" class="timer">OFFLINE</div>
+    <button class="panic-btn" onclick="triggerPanic()">⚠ WIPE</button>
+</header>
+
+<div class="config-area">
+    <div class="id-row">
+        <span>MY ID: <strong id="my-id" style="color:white; font-size:1.1em;">...</strong></span>
+        <button class="copy-btn" onclick="copyId()">COPY</button>
+    </div>
+
+    <input type="password" id="secret-key" placeholder="Enter Shared Password (Key)">
+
+    <div class="input-group">
+        <input type="text" id="peer-id-input" placeholder="Partner's ID">
+        <button class="action-btn" onclick="connectToPeer()">LINK</button>
+    </div>
 </div>
 
-<div class="area">
-    <input type="password" id="secret-key" placeholder="Enter Pre-agreed AES Key">
+<div id="chat">
+    <div class="system-msg">> Waiting for secure link...</div>
 </div>
 
-<div id="chat"></div>
-
-<div class="area">
-    <input type="text" id="peer-id-input" placeholder="Target ID">
-    <button onclick="connectToPeer()">LINK</button>
-</div>
-
-<div class="area">
-    <input type="text" id="message-input" placeholder="Message...">
-    <button onclick="sendMessage()">SEND</button>
-</div>
+<footer>
+    <div class="input-group">
+        <input type="text" id="message-input" placeholder="Message..." autocomplete="off">
+        <button class="send-btn" onclick="sendMessage()">SEND</button>
+    </div>
+</footer>
 
 <script>
-    // 1. Generate shorter, non-sequential ID
+    /* --- SECURITY CORE --- */
     const shortId = Math.random().toString(36).substring(2, 6).toUpperCase();
-    
-    // 2. Peer Config: We use public STUN to connect, BUT you must use VPN to hide the IP sent to STUN.
-    const peer = new Peer(shortId, {
-        debug: 0 // No logs
-    });
-    
+    const peer = new Peer(shortId, { debug: 0 });
     let conn;
     let timerStarted = false;
 
+    // Mobile Copy Function
+    function copyId() {
+        const idText = document.getElementById('my-id').innerText;
+        navigator.clipboard.writeText(idText).then(() => {
+            const btn = document.querySelector('.copy-btn');
+            btn.innerText = "OK!";
+            setTimeout(() => btn.innerText = "COPY", 1500);
+        });
+    }
+
+    // P2P Setup
     peer.on('open', id => document.getElementById('my-id').innerText = id);
     peer.on('connection', c => { conn = c; setupChat(); });
 
     function connectToPeer() {
-        conn = peer.connect(document.getElementById('peer-id-input').value.toUpperCase());
+        const targetId = document.getElementById('peer-id-input').value.toUpperCase();
+        if(!targetId) return alert("Enter an ID");
+        conn = peer.connect(targetId);
         setupChat();
     }
 
     function setupChat() {
         conn.on('data', (data) => {
-            // Decrypt Layer 1: The Packet Wrapper
             try {
                 const packet = JSON.parse(data);
-                
-                // Ignore Dummy Traffic (Chaff)
                 if (packet.type === 'dummy') return; 
-                
-                // Handle Panic
                 if (packet.type === 'panic') { location.reload(); return; }
 
-                // Decrypt Layer 2: The Message
                 if (packet.type === 'msg') {
                     const secret = document.getElementById('secret-key').value;
+                    if(!secret) return appendMessage("SYSTEM", "Error: Set Key to read msg");
+                    
                     const bytes = CryptoJS.AES.decrypt(packet.payload, secret);
                     const originalText = bytes.toString(CryptoJS.enc.Utf8);
                     
                     if (originalText) {
-                        appendMessage("GHOST: " + originalText);
+                        appendMessage("PARTNER", originalText);
                         if (!timerStarted) startDestructTimer();
                     }
                 }
-            } catch(e) { /* Silent fail on noise/attacks */ }
+            } catch(e) {}
         });
 
         conn.on('open', () => {
-            appendMessage("SYSTEM: ENCRYPTED LINK ESTABLISHED");
+            appendMessage("SYSTEM", "SECURE CHANNEL ESTABLISHED");
+            document.getElementById('timer-display').innerText = "SECURE";
             startDestructTimer();
-            startNoiseGenerator(); // Start sending fake data
+            startNoiseGenerator();
         });
     }
 
-    // 3. Traffic Padding: Make all messages same size (2KB) to prevent analysis
+    // Traffic Padding & Noise
     function padMessage(text) {
         const targetSize = 2048; 
         let padding = "";
-        while (padding.length < targetSize - text.length) {
-            padding += Math.random().toString(36).substring(2);
-        }
+        while (padding.length < targetSize - text.length) padding += Math.random().toString(36).substring(2);
         return padding.substring(0, targetSize - text.length);
     }
 
+    function startNoiseGenerator() {
+        setInterval(() => {
+            if (conn && conn.open && Math.random() > 0.8) {
+                conn.send(JSON.stringify({ type: 'dummy', noise: padMessage("") }));
+            }
+        }, 4000);
+    }
+
+    // Messaging
     function sendMessage() {
         const msgInput = document.getElementById('message-input');
         const secret = document.getElementById('secret-key').value;
-        if (!secret) return alert("KEY MISSING");
+        const text = msgInput.value;
+
+        if (!secret) return alert("ENTER PASSWORD FIRST");
+        if (!text) return;
         
-        if (conn && conn.open && msgInput.value !== "") {
-            // Encrypt Content
-            const encryptedContent = CryptoJS.AES.encrypt(msgInput.value, secret).toString();
-            
-            // Wrap in Packet with Padding
-            const packet = {
+        if (conn && conn.open) {
+            const encryptedContent = CryptoJS.AES.encrypt(text, secret).toString();
+            conn.send(JSON.stringify({
                 type: 'msg',
                 payload: encryptedContent,
-                noise: padMessage(encryptedContent) // Fill with junk
-            };
-
-            conn.send(JSON.stringify(packet));
-            appendMessage("YOU: " + msgInput.value);
+                noise: padMessage(encryptedContent)
+            }));
+            appendMessage("ME", text);
             msgInput.value = "";
         }
     }
 
-    // 4. Noise Generator: Randomly send fake packets
-    function startNoiseGenerator() {
-        setInterval(() => {
-            if (conn && conn.open && Math.random() > 0.7) { // 30% chance every few seconds
-                const fakePacket = {
-                    type: 'dummy',
-                    noise: padMessage("") 
-                };
-                conn.send(JSON.stringify(fakePacket));
-            }
-        }, 3000);
+    function appendMessage(sender, text) {
+        const chat = document.getElementById('chat');
+        const div = document.createElement('div');
+        const time = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        
+        if(sender === "SYSTEM") {
+            div.innerHTML = `<span class="system-msg">> ${text}</span>`;
+        } else {
+            const color = sender === "ME" ? "#0f0" : "#00bcd4";
+            div.innerHTML = `<span style="color:#555">[${time}]</span> <strong style="color:${color}">${sender}:</strong> ${text}`;
+        }
+        
+        chat.appendChild(div);
+        chat.scrollTop = chat.scrollHeight;
     }
 
+    // Panic & Timer
     function triggerPanic() {
         if (conn && conn.open) conn.send(JSON.stringify({ type: 'panic' }));
         location.reload();
@@ -147,7 +280,7 @@
     function startDestructTimer() {
         if (timerStarted) return;
         timerStarted = true;
-        let timeLeft = 30 * 60; // 30 minutes
+        let timeLeft = 30 * 60; 
         const interval = setInterval(() => {
             let mins = Math.floor(timeLeft / 60);
             let secs = timeLeft % 60;
@@ -155,14 +288,6 @@
             if (timeLeft <= 0) { clearInterval(interval); location.reload(); }
             timeLeft--;
         }, 1000);
-    }
-
-    function appendMessage(text) {
-        const chat = document.getElementById('chat');
-        const div = document.createElement('div');
-        div.innerText = `[${new Date().toLocaleTimeString()}] ${text}`;
-        chat.appendChild(div);
-        chat.scrollTop = chat.scrollHeight;
     }
 </script>
 </body>
