@@ -3,47 +3,53 @@
 <head>
     <meta charset="UTF-8">
     <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-    <title>30-Min Ultra Secure Chat</title>
+    <title>Ghost Protocol Chat</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
     <style>
-        body { font-family: 'Courier New', monospace; background: #050505; color: #00ff00; display: flex; flex-direction: column; height: 100vh; margin: 0; }
+        body { font-family: 'Courier New', monospace; background: #000; color: #0f0; display: flex; flex-direction: column; height: 100vh; margin: 0; }
         #chat { flex: 1; overflow-y: auto; padding: 20px; border-bottom: 1px solid #333; }
-        .area { padding: 10px; display: flex; gap: 10px; background: #111; border-top: 1px solid #222; }
-        input { flex: 1; padding: 10px; background: #000; color: #00ff00; border: 1px solid #00ff00; }
-        button { padding: 10px 15px; cursor: pointer; background: #00ff00; color: #000; border: none; font-weight: bold; }
+        .area { padding: 10px; display: flex; gap: 10px; background: #050505; border-top: 1px solid #222; }
+        input { flex: 1; padding: 10px; background: #000; color: #0f0; border: 1px solid #0f0; outline: none; }
+        button { padding: 10px 15px; cursor: pointer; background: #0f0; color: #000; border: none; font-weight: bold; }
         .panic-btn { background: #ff0000; color: white; }
         .status { padding: 10px; font-size: 0.8em; border-bottom: 1px solid #222; display: flex; justify-content: space-between; align-items: center; }
+        ::placeholder { color: #004400; }
     </style>
 </head>
 <body>
 
 <div class="status">
-    <div>ID: <strong id="my-id">...</strong></div>
-    <div id="timer-display" style="color:red; font-weight:bold;">WAITING FOR CONNECTION...</div>
-    <button class="panic-btn" onclick="triggerPanic()">PANIC DESTRUCT</button>
+    <div>GHOST ID: <strong id="my-id">...</strong></div>
+    <div id="timer-display" style="color:red; font-weight:bold;">DISCONNECTED</div>
+    <button class="panic-btn" onclick="triggerPanic()">NUCLEAR WIPE</button>
 </div>
 
-<div class="area" style="background: #1a0000;">
-    <input type="password" id="secret-key" placeholder="Enter Shared Secret Key">
+<div class="area">
+    <input type="password" id="secret-key" placeholder="Enter Pre-agreed AES Key">
 </div>
 
 <div id="chat"></div>
 
 <div class="area">
-    <input type="text" id="peer-id-input" placeholder="Friend's Short ID">
-    <button onclick="connectToPeer()">CONNECT</button>
+    <input type="text" id="peer-id-input" placeholder="Target ID">
+    <button onclick="connectToPeer()">LINK</button>
 </div>
 
 <div class="area">
-    <input type="text" id="message-input" placeholder="Type message...">
+    <input type="text" id="message-input" placeholder="Message...">
     <button onclick="sendMessage()">SEND</button>
 </div>
 
 <script>
-    // Generate a 4-character random ID
+    // 1. Generate shorter, non-sequential ID
     const shortId = Math.random().toString(36).substring(2, 6).toUpperCase();
-    const peer = new Peer(shortId); 
+    
+    // 2. Peer Config: We use public STUN to connect, BUT you must use VPN to hide the IP sent to STUN.
+    const peer = new Peer(shortId, {
+        debug: 0 // No logs
+    });
+    
     let conn;
     let timerStarted = false;
 
@@ -57,59 +63,98 @@
 
     function setupChat() {
         conn.on('data', (data) => {
-            if (data === "COMMAND_PANIC_DESTRUCT") { location.reload(); return; }
-            
-            // Start timer on first data or connection if not started
-            if (!timerStarted) startDestructTimer();
-
-            const secret = document.getElementById('secret-key').value;
+            // Decrypt Layer 1: The Packet Wrapper
             try {
-                const bytes = CryptoJS.AES.decrypt(data, secret);
-                const originalText = bytes.toString(CryptoJS.enc.Utf8);
-                appendMessage("FRIEND: " + (originalText || "[Wrong Key]"));
-            } catch(e) { appendMessage("SYSTEM: Data error."); }
+                const packet = JSON.parse(data);
+                
+                // Ignore Dummy Traffic (Chaff)
+                if (packet.type === 'dummy') return; 
+                
+                // Handle Panic
+                if (packet.type === 'panic') { location.reload(); return; }
+
+                // Decrypt Layer 2: The Message
+                if (packet.type === 'msg') {
+                    const secret = document.getElementById('secret-key').value;
+                    const bytes = CryptoJS.AES.decrypt(packet.payload, secret);
+                    const originalText = bytes.toString(CryptoJS.enc.Utf8);
+                    
+                    if (originalText) {
+                        appendMessage("GHOST: " + originalText);
+                        if (!timerStarted) startDestructTimer();
+                    }
+                }
+            } catch(e) { /* Silent fail on noise/attacks */ }
         });
 
         conn.on('open', () => {
-            appendMessage("SYSTEM: ENCRYPTED CHANNEL OPEN");
+            appendMessage("SYSTEM: ENCRYPTED LINK ESTABLISHED");
             startDestructTimer();
+            startNoiseGenerator(); // Start sending fake data
         });
     }
 
-    function startDestructTimer() {
-        if (timerStarted) return;
-        timerStarted = true;
-        let timeLeft = 30 * 60; // 30 minutes in seconds
-
-        const interval = setInterval(() => {
-            let mins = Math.floor(timeLeft / 60);
-            let secs = timeLeft % 60;
-            document.getElementById('timer-display').innerText = `DESTRUCT IN: ${mins}:${secs < 10 ? '0' : ''}${secs}`;
-            
-            if (timeLeft <= 0) {
-                clearInterval(interval);
-                location.reload();
-            }
-            timeLeft--;
-        }, 1000);
+    // 3. Traffic Padding: Make all messages same size (2KB) to prevent analysis
+    function padMessage(text) {
+        const targetSize = 2048; 
+        let padding = "";
+        while (padding.length < targetSize - text.length) {
+            padding += Math.random().toString(36).substring(2);
+        }
+        return padding.substring(0, targetSize - text.length);
     }
 
     function sendMessage() {
         const msgInput = document.getElementById('message-input');
         const secret = document.getElementById('secret-key').value;
-        if (!secret) return alert("Key required!");
+        if (!secret) return alert("KEY MISSING");
         
         if (conn && conn.open && msgInput.value !== "") {
-            const encrypted = CryptoJS.AES.encrypt(msgInput.value, secret).toString();
-            conn.send(encrypted);
+            // Encrypt Content
+            const encryptedContent = CryptoJS.AES.encrypt(msgInput.value, secret).toString();
+            
+            // Wrap in Packet with Padding
+            const packet = {
+                type: 'msg',
+                payload: encryptedContent,
+                noise: padMessage(encryptedContent) // Fill with junk
+            };
+
+            conn.send(JSON.stringify(packet));
             appendMessage("YOU: " + msgInput.value);
             msgInput.value = "";
         }
     }
 
+    // 4. Noise Generator: Randomly send fake packets
+    function startNoiseGenerator() {
+        setInterval(() => {
+            if (conn && conn.open && Math.random() > 0.7) { // 30% chance every few seconds
+                const fakePacket = {
+                    type: 'dummy',
+                    noise: padMessage("") 
+                };
+                conn.send(JSON.stringify(fakePacket));
+            }
+        }, 3000);
+    }
+
     function triggerPanic() {
-        if (conn && conn.open) conn.send("COMMAND_PANIC_DESTRUCT");
+        if (conn && conn.open) conn.send(JSON.stringify({ type: 'panic' }));
         location.reload();
+    }
+
+    function startDestructTimer() {
+        if (timerStarted) return;
+        timerStarted = true;
+        let timeLeft = 30 * 60; // 30 minutes
+        const interval = setInterval(() => {
+            let mins = Math.floor(timeLeft / 60);
+            let secs = timeLeft % 60;
+            document.getElementById('timer-display').innerText = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+            if (timeLeft <= 0) { clearInterval(interval); location.reload(); }
+            timeLeft--;
+        }, 1000);
     }
 
     function appendMessage(text) {
