@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Ghost Mobile Chat</title>
+    <title>Ghost Mobile Chat v2</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
     <style>
@@ -15,7 +15,7 @@
             color: #0f0; 
             display: flex; 
             flex-direction: column; 
-            height: 100dvh; /* Dynamic viewport height for mobile */
+            height: 100dvh; 
             margin: 0; 
             overflow: hidden;
         }
@@ -35,35 +35,36 @@
             background: #d00;
             color: white;
             border: none;
-            padding: 5px 10px;
+            padding: 8px 12px;
             font-weight: bold;
             font-size: 0.8rem;
             border-radius: 4px;
+            box-shadow: 0 0 10px #500;
         }
 
-        /* ID & Connection Area */
+        /* Config Area */
         .config-area {
-            background: #0a0a0a;
+            background: #050505;
             padding: 10px;
             border-bottom: 1px solid #222;
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 10px;
         }
         .id-row {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            background: #1a1a1a;
-            padding: 8px;
+            background: #151515;
+            padding: 10px;
             border-radius: 4px;
             border: 1px solid #333;
         }
         .copy-btn {
-            background: #0f0;
+            background: #00cc00;
             color: #000;
             border: none;
-            padding: 5px 12px;
+            padding: 5px 15px;
             font-weight: bold;
             cursor: pointer;
             font-size: 0.9rem;
@@ -81,21 +82,24 @@
         }
         #chat div { margin-bottom: 8px; line-height: 1.4; }
 
-        /* Input Controls */
-        .input-group {
-            display: flex;
-            gap: 5px;
-        }
+        /* Inputs & Buttons */
+        .input-group { display: flex; gap: 5px; }
         input {
             flex: 1;
             background: #000;
             color: #0f0;
-            border: 1px solid #333;
-            padding: 12px; /* Large touch area */
-            font-size: 16px; /* Prevents iOS zoom */
+            border: 1px solid #444;
+            padding: 12px; 
+            font-size: 16px; 
             border-radius: 4px;
             font-family: monospace;
+            outline: none;
         }
+        /* Make placeholder text brighter */
+        ::placeholder { color: #009900; opacity: 0.8; }
+        
+        input:focus { border-color: #0f0; }
+
         button.action-btn {
             background: #111;
             color: #0f0;
@@ -113,7 +117,7 @@
             border-radius: 4px;
         }
 
-        /* Footer Area */
+        /* Footer */
         footer {
             padding: 10px;
             background: #111;
@@ -122,22 +126,19 @@
             flex-direction: column;
             gap: 8px;
         }
-
-        /* Visual Tweaks */
-        ::placeholder { color: #004400; opacity: 1; }
-        .system-msg { color: #555; font-size: 0.8em; font-style: italic; }
+        .system-msg { color: #666; font-size: 0.8em; font-style: italic; }
     </style>
 </head>
 <body>
 
 <header>
     <div id="timer-display" class="timer">OFFLINE</div>
-    <button class="panic-btn" onclick="triggerPanic()">⚠ WIPE</button>
+    <button class="panic-btn" onclick="triggerPanic()">⚠ WIPE ALL</button>
 </header>
 
 <div class="config-area">
     <div class="id-row">
-        <span>MY ID: <strong id="my-id" style="color:white; font-size:1.1em;">...</strong></span>
+        <span>MY ID: <strong id="my-id" style="color:#fff; font-size:1.2em; letter-spacing: 1px;">...</strong></span>
         <button class="copy-btn" onclick="copyId()">COPY</button>
     </div>
 
@@ -155,35 +156,39 @@
 
 <footer>
     <div class="input-group">
-        <input type="text" id="message-input" placeholder="Message..." autocomplete="off">
+        <input type="text" id="message-input" placeholder="Type message..." autocomplete="off">
         <button class="send-btn" onclick="sendMessage()">SEND</button>
     </div>
 </footer>
 
 <script>
-    /* --- SECURITY CORE --- */
+    /* --- CORE VARIABLES --- */
     const shortId = Math.random().toString(36).substring(2, 6).toUpperCase();
     const peer = new Peer(shortId, { debug: 0 });
     let conn;
     let timerStarted = false;
 
-    // Mobile Copy Function
+    // --- UTILS ---
     function copyId() {
         const idText = document.getElementById('my-id').innerText;
         navigator.clipboard.writeText(idText).then(() => {
             const btn = document.querySelector('.copy-btn');
             btn.innerText = "OK!";
-            setTimeout(() => btn.innerText = "COPY", 1500);
+            btn.style.background = "#fff";
+            setTimeout(() => { 
+                btn.innerText = "COPY"; 
+                btn.style.background = "#00cc00"; 
+            }, 1500);
         });
     }
 
-    // P2P Setup
+    // --- P2P LOGIC ---
     peer.on('open', id => document.getElementById('my-id').innerText = id);
     peer.on('connection', c => { conn = c; setupChat(); });
 
     function connectToPeer() {
         const targetId = document.getElementById('peer-id-input').value.toUpperCase();
-        if(!targetId) return alert("Enter an ID");
+        if(!targetId) return alert("Please enter a Target ID");
         conn = peer.connect(targetId);
         setupChat();
     }
@@ -193,11 +198,17 @@
             try {
                 const packet = JSON.parse(data);
                 if (packet.type === 'dummy') return; 
-                if (packet.type === 'panic') { location.reload(); return; }
+                
+                // HANDLE REMOTE WIPE
+                if (packet.type === 'panic') { 
+                    document.body.innerHTML = "<h1 style='color:red;text-align:center;margin-top:40vh;font-family:monospace'>PROTOCOL 0 EXECUTED<br>REMOTE WIPE</h1>";
+                    setTimeout(() => location.reload(), 2000); // 2 sec delay to show msg
+                    return; 
+                }
 
                 if (packet.type === 'msg') {
                     const secret = document.getElementById('secret-key').value;
-                    if(!secret) return appendMessage("SYSTEM", "Error: Set Key to read msg");
+                    if(!secret) return appendMessage("SYSTEM", "⚠️ Set Key to decrypt message");
                     
                     const bytes = CryptoJS.AES.decrypt(packet.payload, secret);
                     const originalText = bytes.toString(CryptoJS.enc.Utf8);
@@ -218,7 +229,7 @@
         });
     }
 
-    // Traffic Padding & Noise
+    // --- ENCRYPTION & SENDING ---
     function padMessage(text) {
         const targetSize = 2048; 
         let padding = "";
@@ -228,13 +239,12 @@
 
     function startNoiseGenerator() {
         setInterval(() => {
-            if (conn && conn.open && Math.random() > 0.8) {
+            if (conn && conn.open && Math.random() > 0.85) {
                 conn.send(JSON.stringify({ type: 'dummy', noise: padMessage("") }));
             }
-        }, 4000);
+        }, 5000);
     }
 
-    // Messaging
     function sendMessage() {
         const msgInput = document.getElementById('message-input');
         const secret = document.getElementById('secret-key').value;
@@ -271,10 +281,21 @@
         chat.scrollTop = chat.scrollHeight;
     }
 
-    // Panic & Timer
+    // --- PANIC & TIMER ---
     function triggerPanic() {
-        if (conn && conn.open) conn.send(JSON.stringify({ type: 'panic' }));
-        location.reload();
+        // Visual Feedback immediate
+        const btn = document.querySelector('.panic-btn');
+        btn.innerText = "DESTRUCTING...";
+        
+        if (conn && conn.open) {
+            // Send the command
+            conn.send(JSON.stringify({ type: 'panic' }));
+        }
+        
+        // DELAY to ensure the signal gets out before we die
+        setTimeout(() => {
+            location.reload();
+        }, 800);
     }
 
     function startDestructTimer() {
