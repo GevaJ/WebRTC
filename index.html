@@ -2,249 +2,157 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Ghost Protocol: Stable Relay</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ghost DEBUGGER</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
     <style>
-        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-        body { 
-            font-family: 'Courier New', monospace; 
-            background: #000; color: #0f0; 
-            height: 100dvh; display: flex; flex-direction: column; margin: 0; overflow: hidden; 
-        }
-
-        /* HEADER */
-        header {
-            background: #111; padding: 10px; border-bottom: 1px solid #333;
-            display: flex; justify-content: space-between; align-items: center;
-        }
-        .timer { color: red; font-weight: bold; }
-        .panic-btn { background: #d00; color: white; border: none; padding: 6px 12px; font-weight: bold; border-radius: 4px; }
-
-        /* CONFIGURATION */
-        .config-area {
-            background: #080808; padding: 12px; border-bottom: 1px solid #222;
-            display: flex; flex-direction: column; gap: 10px;
-        }
-        .row { display: flex; gap: 8px; }
-        input { 
-            flex: 1; background: #000; color: #0f0; border: 1px solid #444; 
-            padding: 10px; font-size: 16px; border-radius: 4px; outline: none; 
-        }
-        ::placeholder { color: #008800; }
-        button { cursor: pointer; font-family: inherit; }
+        body { background: #000; color: #0f0; font-family: monospace; display: flex; flex-direction: column; height: 100vh; margin: 0; }
+        .box { border: 1px solid #333; padding: 10px; margin: 5px; background: #111; }
+        input { background: #222; color: #fff; border: 1px solid #555; padding: 5px; width: 100%; margin-bottom: 5px; }
+        button { cursor: pointer; padding: 5px 10px; font-weight: bold; }
+        .btn-green { background: #0f0; color: #000; border: none; }
+        .btn-blue { background: #00bcd4; color: #000; border: none; }
         
-        .btn-copy { background: #008800; color: #000; border: none; font-weight: bold; padding: 0 10px; }
-        .btn-connect { background: #111; color: #0f0; border: 1px solid #0f0; font-weight: bold; padding: 0 15px; }
-        
-        /* CHAT AREA */
-        #chat { flex: 1; overflow-y: auto; padding: 15px; background: #000; display: flex; flex-direction: column; gap: 8px; }
-        .msg-row { line-height: 1.4; word-wrap: break-word; }
-        .sys-log { color: #555; font-size: 0.75rem; border-left: 2px solid #333; padding-left: 5px; }
-
-        /* FOOTER */
-        footer { padding: 10px; background: #111; border-top: 1px solid #333; display: flex; gap: 8px; }
-        .btn-send { background: #0f0; color: #000; border: none; font-weight: bold; padding: 0 20px; border-radius: 4px; }
-
-        /* ANIMATION */
-        .blink { animation: blinker 0.2s linear; }
-        @keyframes blinker { 50% { background-color: #002200; } }
+        #logs { flex: 1; overflow-y: scroll; border-top: 2px solid #333; padding: 10px; font-size: 12px; }
+        .log-entry { margin-bottom: 2px; border-bottom: 1px solid #222; }
+        .log-time { color: #666; margin-right: 5px; }
+        .log-tx { color: #0f0; } /* Transmit */
+        .log-rx { color: #00bcd4; } /* Receive */
+        .log-err { color: #f00; background: #200; } /* Error */
+        .log-sys { color: #ff0; } /* System */
     </style>
 </head>
 <body>
 
-<header>
-    <div id="status-text" class="timer">NOT CONNECTED</div>
-    <button class="panic-btn" onclick="triggerPanic()">⚠ WIPE</button>
-</header>
-
-<div class="config-area">
-    <div class="row" style="background: #111; padding: 5px; border: 1px solid #333;">
-        <span style="align-self:center; color:#888;">ROOM:</span>
-        <strong id="room-id-display" style="align-self:center; color:#fff; flex:1; text-align:center; letter-spacing:1px;">...</strong>
-        <button class="btn-copy" onclick="copyRoom()">COPY</button>
+<div class="box">
+    <h3 style="margin:0 0 10px 0; color:white;">GHOST DEBUG MODE</h3>
+    
+    <label>1. SHARED PASSWORD (Must match exactly):</label>
+    <input type="text" id="password" value="123456"> <label>2. MY ROOM ID (Share this):</label>
+    <div style="display:flex; gap:5px; margin-bottom:5px;">
+        <input type="text" id="my-room" readonly style="background:#000; color:#ff0; font-weight:bold;">
     </div>
 
-    <input type="password" id="key-input" placeholder="ENTER SECRET PASSWORD">
-
-    <div class="row">
-        <input type="text" id="join-input" placeholder="Paste Partner's Room ID">
-        <button class="btn-connect" id="connect-btn" onclick="connect()">CONNECT</button>
+    <label>3. PARTNER ROOM ID (Paste here to join):</label>
+    <div style="display:flex; gap:5px;">
+        <input type="text" id="target-room" placeholder="Paste ID here...">
+        <button class="btn-blue" onclick="connect()">CONNECT</button>
     </div>
 </div>
 
-<div id="chat">
-    <div class="sys-log">> SYSTEM READY.</div>
-    <div class="sys-log">> Please enter Password & Room ID.</div>
+<div id="logs">
+    <div class="log-entry"><span class="log-sys">--- SYSTEM READY ---</span></div>
 </div>
 
-<footer>
-    <input type="text" id="msg-input" placeholder="Message..." autocomplete="off">
-    <button class="btn-send" onclick="sendMsg()">SEND</button>
-</footer>
+<div class="box" style="display:flex; gap:5px;">
+    <input type="text" id="msg-input" placeholder="Type message...">
+    <button class="btn-green" onclick="send()">SEND</button>
+</div>
 
 <script>
-    // --- CONFIG ---
-    // שימוש במפתח הציבורי של PieSocket (יציב מאוד)
+    // --- SETUP ---
     const API_KEY = 'VCXCEuvhGcBDP7XhiJJUDvR1e1D3eiVjgZ9VRiaV'; 
-    const CLUSTER = 'free.blr2.piesocket.com'; // שרת יציב
-    
+    const CLUSTER = 'free.blr2.piesocket.com';
     let socket = null;
-    let myRoom = Math.floor(Math.random() * 1000000).toString(); // מספר חדר פשוט
-    let timerStarted = false;
+    
+    // Generate a random room ID for myself
+    const myRandomId = Math.floor(Math.random() * 90000) + 10000;
+    document.getElementById('my-room').value = myRandomId;
 
-    // אתחול ראשוני
-    document.getElementById('room-id-display').innerText = myRoom;
-
-    function log(text, type="SYS") {
-        const chat = document.getElementById('chat');
+    // --- LOGGING FUNCTION ---
+    function log(msg, type = "sys") {
+        const logs = document.getElementById('logs');
         const div = document.createElement('div');
-        div.className = 'msg-row';
-        if(type === "SYS") {
-            div.className += ' sys-log';
-            div.innerText = `> ${text}`;
-        } else if (type === "ERR") {
-            div.className += ' sys-log';
-            div.style.color = "red";
-            div.innerText = `> ERROR: ${text}`;
-        } else {
-            const color = type === "YOU" ? "#0f0" : "#00bcd4";
-            div.innerHTML = `<strong style="color:${color}">${type}:</strong> ${text}`;
-        }
-        chat.appendChild(div);
-        chat.scrollTop = chat.scrollHeight;
+        div.className = `log-entry log-${type}`;
+        const time = new Date().toLocaleTimeString().split(' ')[0];
+        div.innerHTML = `<span class="log-time">[${time}]</span> ${msg}`;
+        logs.appendChild(div);
+        logs.scrollTop = logs.scrollHeight;
     }
 
+    // --- CONNECTION ---
     function connect() {
-        const joinInput = document.getElementById('join-input').value;
-        const keyInput = document.getElementById('key-input').value;
-
-        if (!keyInput) { log("Error: Password is required!", "ERR"); return; }
-        
-        // אם המשתמש הזין חדר להצטרף אליו, נשתמש בו. אחרת, נשתמש בחדר שלי.
-        const targetRoom = joinInput ? joinInput : myRoom;
-        
-        document.getElementById('connect-btn').innerText = "Connecting...";
-        log(`Attempting connection to Room ${targetRoom}...`);
-
-        // יצירת חיבור WebSocket
-        const url = `wss://${CLUSTER}/v3/${targetRoom}?api_key=${API_KEY}&notify_self=0`;
-        
-        try {
-            socket = new WebSocket(url);
-        } catch (e) {
-            log("WebSocket blocked. Disable shields?", "ERR");
-            return;
+        // 1. Determine which room to use
+        let target = document.getElementById('target-room').value;
+        if (!target) {
+            target = document.getElementById('my-room').value;
+            log(`No partner ID entered. Connecting to MY OWN room: ${target}`, "sys");
+        } else {
+            log(`Connecting to PARTNER room: ${target}`, "sys");
         }
 
+        const url = `wss://${CLUSTER}/v3/${target}?api_key=${API_KEY}&notify_self=0`;
+        
+        log(`Dialing WebSocket...`, "sys");
+
+        if (socket) { socket.close(); } // Close old connection if exists
+
+        socket = new WebSocket(url);
+
         socket.onopen = () => {
-            document.getElementById('status-text').innerText = "SECURE LINK ACTIVE";
-            document.getElementById('status-text').style.color = "#0f0";
-            document.getElementById('connect-btn').innerText = "LINKED";
-            document.getElementById('connect-btn').style.background = "#0f0";
-            document.getElementById('connect-btn').style.color = "#000";
-            log("Secure Relay Established.");
-            startTimer();
+            log(`>> WEBSOCKET CONNECTED! (Room: ${target})`, "sys");
+            log(`>> WAITING FOR DATA...`, "sys");
+            document.body.style.boxShadow = "inset 0 0 20px #005500";
         };
 
-        socket.onerror = (error) => {
-            console.error(error);
-            log("Connection Failed. Check network/Tor settings.", "ERR");
-            document.getElementById('connect-btn').innerText = "RETRY";
+        socket.onerror = (e) => {
+            log(`!! SOCKET ERROR. Check Console. blocked by Tor?`, "err");
+            console.error(e);
         };
 
         socket.onclose = () => {
-            log("Connection Lost.", "ERR");
-            document.getElementById('status-text').innerText = "DISCONNECTED";
-            document.getElementById('status-text').style.color = "red";
+            log(`!! SOCKET DISCONNECTED.`, "err");
+            document.body.style.boxShadow = "none";
         };
 
         socket.onmessage = (event) => {
+            // STEP A: Raw Data Received
+            log(`RX RAW PACKET: Length ${event.data.length}`, "rx");
+            
             try {
                 const data = JSON.parse(event.data);
-                if(data.type === 'panic') { triggerPanic(false); return; }
-                if(data.type === 'msg') {
-                    const bytes = CryptoJS.AES.decrypt(data.payload, keyInput);
-                    const originalText = bytes.toString(CryptoJS.enc.Utf8);
+                
+                if (data.type === 'msg') {
+                    // STEP B: Attempt Decrypt
+                    const pass = document.getElementById('password').value;
+                    log(`Attempting Decrypt with pass: "${pass}"...`, "sys");
                     
-                    if(originalText) {
-                        log(originalText, "GHOST");
-                        playBeep();
-                        document.body.classList.add('blink');
-                        setTimeout(()=>document.body.classList.remove('blink'), 200);
+                    try {
+                        const bytes = CryptoJS.AES.decrypt(data.payload, pass);
+                        const txt = bytes.toString(CryptoJS.enc.Utf8);
+                        
+                        if (txt) {
+                            log(`>> SUCCESS DECRYPTED: "${txt}"`, "rx");
+                        } else {
+                            log(`!! DECRYPT EMPTY. WRONG PASSWORD?`, "err");
+                        }
+                    } catch (err) {
+                        log(`!! DECRYPT CRASH: ${err.message}`, "err");
                     }
                 }
             } catch (e) {
-                // התעלמות מהודעות מערכת של השרת
+                log(`!! JSON PARSE ERROR: ${e.message}`, "err");
             }
         };
     }
 
-    function sendMsg() {
-        const input = document.getElementById('msg-input');
-        const text = input.value;
-        const key = document.getElementById('key-input').value;
-
-        if(!socket || socket.readyState !== WebSocket.OPEN) {
-            log("Not connected! Click CONNECT first.", "ERR");
+    // --- SENDING ---
+    function send() {
+        const text = document.getElementById('msg-input').value;
+        const pass = document.getElementById('password').value;
+        
+        if (!socket || socket.readyState !== WebSocket.OPEN) {
+            log(`!! CANNOT SEND: Not Connected`, "err");
             return;
         }
-        if(!key) { log("Missing Password!", "ERR"); return; }
-        if(!text) return;
 
-        const encrypted = CryptoJS.AES.encrypt(text, key).toString();
+        log(`Encrypting "${text}" with "${pass}"...`, "sys");
+        const enc = CryptoJS.AES.encrypt(text, pass).toString();
         
-        const payload = JSON.stringify({
-            type: 'msg',
-            payload: encrypted
-        });
-
-        socket.send(payload);
-        log(text, "YOU");
-        input.value = "";
+        socket.send(JSON.stringify({ type: 'msg', payload: enc }));
+        log(`>> SENT PACKET (Size: ${enc.length})`, "tx");
+        document.getElementById('msg-input').value = "";
     }
-
-    // --- UTILS ---
-    function triggerPanic(sendSignal = true) {
-        if(sendSignal && socket && socket.readyState === WebSocket.OPEN) {
-            socket.send(JSON.stringify({ type: 'panic' }));
-        }
-        document.body.innerHTML = "<h1 style='color:red; text-align:center; margin-top:40vh; font-family:monospace;'>PROTOCOL ZERO<br>MEMORY WIPED</h1>";
-        setTimeout(() => location.reload(), 1000);
-    }
-
-    function startTimer() {
-        if(timerStarted) return;
-        timerStarted = true;
-        let timeLeft = 30 * 60;
-        setInterval(() => {
-            let m = Math.floor(timeLeft / 60);
-            let s = timeLeft % 60;
-            const text = `AUTO-WIPE: ${m}:${s<10?'0':''}${s}`;
-            const el = document.getElementById('status-text');
-            if(el.innerText !== "DISCONNECTED") el.innerText = text;
-            if(timeLeft-- <= 0) location.reload();
-        }, 1000);
-    }
-
-    function copyRoom() {
-        navigator.clipboard.writeText(myRoom);
-        alert("Room ID Copied: " + myRoom);
-    }
-
-    function playBeep() {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const o = ctx.createOscillator();
-        const g = ctx.createGain();
-        o.type = 'square'; o.frequency.setValueAtTime(800, ctx.currentTime);
-        g.gain.setValueAtTime(0.05, ctx.currentTime);
-        o.connect(g); g.connect(ctx.destination);
-        o.start(); o.stop(ctx.currentTime + 0.1);
-    }
-
-    document.getElementById('msg-input').addEventListener('keypress', (e) => {
-        if(e.key === 'Enter') sendMsg();
-    });
 </script>
 </body>
 </html>
