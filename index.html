@@ -3,87 +3,90 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Tor-Secure Ghost Chat</title>
+    <title>Ghost Tor-Relay</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
     <style>
-        * { box-sizing: border-box; font-family: 'Courier New', monospace; }
-        body { background: #000; color: #0f0; height: 100dvh; display: flex; flex-direction: column; margin: 0; overflow: hidden; }
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        body { font-family: 'Courier New', monospace; background: #000; color: #0f0; height: 100dvh; display: flex; flex-direction: column; margin: 0; overflow: hidden; }
         header { background: #111; padding: 10px; border-bottom: 1px solid #333; display: flex; justify-content: space-between; align-items: center; }
-        .timer { color: red; font-weight: bold; }
-        .panic-btn { background: #d00; color: #fff; border: none; padding: 8px; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        #chat { flex: 1; overflow-y: auto; padding: 15px; }
-        .config { background: #050505; padding: 10px; border-bottom: 1px solid #222; display: flex; flex-direction: column; gap: 10px; }
+        .timer { color: red; font-weight: bold; font-size: 0.9rem; }
+        .panic-btn { background: #d00; color: white; border: none; padding: 8px 12px; font-weight: bold; border-radius: 4px; }
+        .config-area { background: #050505; padding: 10px; border-bottom: 1px solid #222; display: flex; flex-direction: column; gap: 10px; }
         input { background: #000; color: #0f0; border: 1px solid #444; padding: 12px; font-size: 16px; border-radius: 4px; outline: none; }
-        ::placeholder { color: #00ff00; opacity: 0.7; }
+        ::placeholder { color: #00ff00; opacity: 0.6; }
+        #chat { flex: 1; overflow-y: auto; padding: 15px; background: #000; }
         footer { padding: 10px; background: #111; border-top: 1px solid #333; display: flex; gap: 5px; }
-        .send-btn { background: #0f0; color: #000; border: none; padding: 0 20px; font-weight: bold; border-radius: 4px; }
-        .msg { margin-bottom: 10px; }
-        .sys { color: #555; font-size: 0.8em; }
+        .btn { background: #111; color: #0f0; border: 1px solid #0f0; padding: 10px; font-weight: bold; border-radius: 4px; cursor: pointer; }
+        .send-btn { background: #0f0; color: #000; border: none; padding: 0 20px; }
+        .sys { color: #555; font-size: 0.8em; margin-bottom: 5px; }
     </style>
 </head>
 <body>
 
 <header>
     <div id="status" class="timer">OFFLINE</div>
-    <button class="panic-btn" onclick="wipe()">⚠ NUCLEAR WIPE</button>
+    <button class="panic-btn" onclick="triggerPanic()">⚠ WIPE</button>
 </header>
 
-<div class="config">
-    <div style="display:flex; justify-content:space-between; background:#111; padding:10px; border:1px solid #333;">
-        <span>ROOM ID: <strong id="room-display" style="color:#fff">...</strong></span>
-        <button onclick="copyId()" style="background:#0f0; border:none; padding:2px 10px; font-weight:bold; border-radius:3px;">COPY</button>
+<div class="config-area">
+    <div style="display:flex; justify-content:space-between; align-items:center; background:#151515; padding:8px; border:1px solid #333;">
+        <span>ROOM: <strong id="room-display" style="color:#fff">...</strong></span>
+        <button onclick="copyRoom()" class="btn" style="padding:2px 8px; font-size:0.8rem;">COPY</button>
     </div>
-    <input type="password" id="key" placeholder="AES PASSWORD KEY">
-    <input type="text" id="join-room" placeholder="ENTER ROOM ID TO JOIN">
-    <button onclick="initConnection()" style="background:#111; color:#0f0; border:1px solid #0f0; padding:10px; font-weight:bold;">ESTABLISH LINK</button>
+    <input type="password" id="key-input" placeholder="AES PASSWORD">
+    <div style="display:flex; gap:5px;">
+        <input type="text" id="join-room" placeholder="JOIN ROOM ID">
+        <button onclick="initRelay()" class="btn">CONNECT</button>
+    </div>
 </div>
 
-<div id="chat">
-    <div class="sys">> SYSTEM: Tor-compatible mode active. Enter password and Link.</div>
-</div>
+<div id="chat"><div class="sys">> SYSTEM: RELAY MODE. Enter key and Connect.</div></div>
 
 <footer>
-    <input type="text" id="input" placeholder="Secure transmit..." style="flex:1" autocomplete="off">
-    <button class="send-btn" onclick="send()">SEND</button>
+    <input type="text" id="msg-input" placeholder="Type /clear or message..." style="flex:1" autocomplete="off">
+    <button class="send-btn btn" onclick="sendMsg()">SEND</button>
 </footer>
 
 <script>
-    // הגדרת שרת ממסר ציבורי חינמי (בשימוש זמני לצורך הדגמה - בייצור מומלץ להריץ שרת פרטי)
     let socket;
-    let roomId = Math.random().toString(36).substring(2, 6).toUpperCase();
-    document.getElementById('room-display').innerText = roomId;
+    let currentRoom = Math.random().toString(36).substring(2, 6).toUpperCase();
+    let timerStarted = false;
+    document.getElementById('room-display').innerText = currentRoom;
 
-    function initConnection() {
-        const target = document.getElementById('join-room').value.toUpperCase();
-        if(target) roomId = target;
+    function initRelay() {
+        const join = document.getElementById('join-room').value.toUpperCase();
+        if(join) currentRoom = join;
         
-        // שימוש בשרת WebSocket ממסר (Tor לא חוסם את זה)
-        socket = new WebSocket('wss://socketsbay.com/wss/v2/1/' + roomId + '/');
+        // שימוש בשרת WebSocket ממסר ציבורי (לא דורש אישור WebRTC)
+        socket = new WebSocket('wss://socketsbay.com/wss/v2/1/' + currentRoom + '/');
 
         socket.onopen = () => {
-            appendMsg("SYSTEM", "RELAY LINK ESTABLISHED ON ROOM: " + roomId);
-            document.getElementById('status').innerText = "LINKED";
+            appendMsg("SYSTEM", "LINKED TO RELAY: " + currentRoom);
+            document.getElementById('status').innerText = "SECURE";
             startTimer();
         };
 
         socket.onmessage = (e) => {
-            const data = JSON.parse(e.data);
-            if(data.type === 'panic') wipe();
-            if(data.type === 'msg') {
-                const key = document.getElementById('key').value;
-                const b = CryptoJS.AES.decrypt(data.payload, key);
-                const txt = b.toString(CryptoJS.enc.Utf8);
-                if(txt) {
-                    appendMsg("GHOST", txt);
-                    playHackerSound();
+            try {
+                const data = JSON.parse(e.data);
+                if(data.type === 'panic') location.reload();
+                if(data.type === 'msg') {
+                    const key = document.getElementById('key-input').value;
+                    const b = CryptoJS.AES.decrypt(data.payload, key);
+                    const txt = b.toString(CryptoJS.enc.Utf8);
+                    if(txt) {
+                        appendMsg("GHOST", txt);
+                        playHackerSound();
+                    }
                 }
-            }
+            } catch(err) {}
         };
     }
 
-    function send() {
-        const input = document.getElementById('input');
-        const key = document.getElementById('key').value;
+    function sendMsg() {
+        const input = document.getElementById('msg-input');
+        const key = document.getElementById('key-input').value;
+        if(input.value === '/clear') { document.getElementById('chat').innerHTML = ''; input.value = ''; return; }
         if(!key || !input.value || !socket) return;
 
         const enc = CryptoJS.AES.encrypt(input.value, key).toString();
@@ -93,20 +96,20 @@
     }
 
     function appendMsg(s, t) {
-        const c = document.getElementById('chat');
+        const chat = document.getElementById('chat');
         const d = document.createElement('div');
-        d.className = 'msg';
-        d.innerHTML = `<strong style="color:${s === 'YOU' ? '#0f0' : '#00bcd4'}">${s}:</strong> ${t}`;
-        c.appendChild(d);
-        c.scrollTop = c.scrollHeight;
+        const color = s === 'YOU' ? '#0f0' : (s === 'SYSTEM' ? '#555' : '#00bcd4');
+        d.innerHTML = `<strong style="color:${color}">${s}:</strong> ${t}`;
+        chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
     }
 
-    function wipe() {
+    function triggerPanic() {
         if(socket) socket.send(JSON.stringify({ type: 'panic' }));
         setTimeout(() => location.reload(), 500);
     }
 
     function startTimer() {
+        if(timerStarted) return; timerStarted = true;
         let tl = 30 * 60;
         setInterval(() => {
             let m = Math.floor(tl / 60), s = tl % 60;
@@ -119,17 +122,17 @@
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         const o = ctx.createOscillator();
         const g = ctx.createGain();
-        o.type = 'square'; o.frequency.setValueAtTime(1500, ctx.currentTime);
+        o.type = 'square'; o.frequency.setValueAtTime(1200, ctx.currentTime);
         g.gain.setValueAtTime(0.05, ctx.currentTime);
         o.connect(g); g.connect(ctx.destination);
         o.start(); o.stop(ctx.currentTime + 0.1);
     }
 
-    function copyId() {
-        navigator.clipboard.writeText(roomId);
+    function copyRoom() {
+        navigator.clipboard.writeText(currentRoom);
     }
 
-    document.getElementById('input').addEventListener('keypress', e => { if(e.key==='Enter') send(); });
+    document.getElementById('msg-input').addEventListener('keypress', e => { if(e.key==='Enter') sendMsg(); });
 </script>
 </body>
 </html>
