@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Ghost Protocol v4</title>
+    <title>Ghost Protocol v5 - Final</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
     <style>
@@ -39,10 +39,10 @@
             font-weight: bold; cursor: pointer; border-radius: 3px;
         }
 
-        #chat { flex: 1; overflow-y: auto; padding: 15px; background: #000; font-size: 1rem; border: 0px solid #0f0; }
+        #chat { flex: 1; overflow-y: auto; padding: 15px; background: #000; font-size: 1rem; }
         #chat div { margin-bottom: 8px; line-height: 1.4; }
 
-        /* Brighter Placeholders */
+        .input-group { display: flex; gap: 5px; }
         input {
             flex: 1; background: #000; color: #0f0; border: 1px solid #444;
             padding: 12px; font-size: 16px; border-radius: 4px; font-family: monospace; outline: none;
@@ -54,8 +54,6 @@
 
         footer { padding: 10px; background: #111; border-top: 1px solid #333; }
         .system-msg { color: #666; font-size: 0.8em; }
-
-        /* Receive Blink Animation */
         .blink { box-shadow: inset 0 0 20px #0f0; }
     </style>
 </head>
@@ -78,48 +76,40 @@
     </div>
 </div>
 
-<div id="chat"><div class="system-msg">> Waiting for secure handshake...</div></div>
+<div id="chat"><div class="system-msg">> Waiting for handshake...</div></div>
 
 <footer>
     <div class="input-group">
-        <input type="text" id="message-input" placeholder="Transmit message..." autocomplete="off">
+        <input type="text" id="message-input" placeholder="Type /clear or message..." autocomplete="off">
         <button class="send-btn" onclick="sendMessage()">SEND</button>
     </div>
 </footer>
 
 <script>
     const shortId = Math.random().toString(36).substring(2, 6).toUpperCase();
+    
+    // Tor/VPN Friendly Config
     const peer = new Peer(shortId, {
-    config: {
-        'iceServers': [
-            { url: 'stun:stun.l.google.com:19302' },
-            { url: 'stun:stun1.l.google.com:19302' }
-        ]
-    },
-    debug: 0
-});
+        config: { 'iceServers': [{ url: 'stun:stun.l.google.com:19302' }, { url: 'stun:stun1.l.google.com:19302' }] },
+        debug: 0
+    });
+
     let conn;
     let timerStarted = false;
 
-    // --- HACKER SOUND ENGINE ---
     function playHackerSound() {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        
-        const playTone = (freq, start, duration) => {
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.type = 'square';
-            osc.frequency.setValueAtTime(freq, ctx.currentTime + start);
-            gain.gain.setValueAtTime(0.05, ctx.currentTime + start);
-            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + start + duration);
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.start(ctx.currentTime + start);
-            osc.stop(ctx.currentTime + start + duration);
-        };
-
-        playTone(1200, 0, 0.05);   // Short beep 1
-        playTone(1800, 0.06, 0.08); // Short beep 2 (Higher)
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const t = ctx.currentTime;
+            const play = (f, s, d) => {
+                const o = ctx.createOscillator(), g = ctx.createGain();
+                o.type = 'square'; o.frequency.setValueAtTime(f, t + s);
+                g.gain.setValueAtTime(0.05, t + s); g.gain.exponentialRampToValueAtTime(0.01, t + s + d);
+                o.connect(g); g.connect(ctx.destination);
+                o.start(t + s); o.stop(t + s + d);
+            };
+            play(1200, 0, 0.05); play(1800, 0.06, 0.08);
+        } catch(e) {}
     }
 
     function visualBlink() {
@@ -127,7 +117,6 @@
         setTimeout(() => document.body.classList.remove('blink'), 150);
     }
 
-    // Key Listener
     document.getElementById('message-input').addEventListener('keypress', (e) => {
         if (e.key === 'Enter') { e.preventDefault(); sendMessage(); }
     });
@@ -144,57 +133,59 @@
 
     function setupChat() {
         conn.on('data', (data) => {
-            const packet = JSON.parse(data);
-            if (packet.type === 'panic') { location.reload(); return; }
-            if (packet.type === 'msg') {
-                const secret = document.getElementById('secret-key').value;
-                const bytes = CryptoJS.AES.decrypt(packet.payload, secret);
-                const text = bytes.toString(CryptoJS.enc.Utf8);
-                if (text) {
-                    playHackerSound();
-                    visualBlink();
-                    appendMessage("GHOST", text);
-                    if (!timerStarted) startDestructTimer();
-                }
+            const p = JSON.parse(data);
+            if (p.type === 'panic') { 
+                document.body.innerHTML = "<h1 style='color:red;text-align:center;margin-top:40vh;'>WIPED</h1>";
+                setTimeout(() => location.reload(), 1000); 
+                return; 
+            }
+            if (p.type === 'msg') {
+                const key = document.getElementById('secret-key').value;
+                const b = CryptoJS.AES.decrypt(p.payload, key);
+                const txt = b.toString(CryptoJS.enc.Utf8);
+                if (txt) { playHackerSound(); visualBlink(); appendMessage("GHOST", txt); if (!timerStarted) startDestructTimer(); }
             }
         });
-        conn.on('open', () => { appendMessage("SYSTEM", "SECURE TUNNEL OPENED"); startDestructTimer(); });
+        conn.on('open', () => { appendMessage("SYSTEM", "SECURE LINK ESTABLISHED"); startDestructTimer(); });
     }
 
     function sendMessage() {
         const input = document.getElementById('message-input');
-        const secret = document.getElementById('secret-key').value;
-        if (!secret || !input.value) return;
-        if (conn && conn.open) {
-            const enc = CryptoJS.AES.encrypt(input.value, secret).toString();
-            conn.send(JSON.stringify({ type: 'msg', payload: enc }));
-            appendMessage("YOU", input.value);
-            input.value = "";
+        const key = document.getElementById('secret-key').value;
+        
+        if (input.value === '/clear') {
+            document.getElementById('chat').innerHTML = '<div class="system-msg">> Screen cleared.</div>';
+            input.value = ""; return;
         }
+
+        if (!key || !input.value || !conn || !conn.open) return;
+        const enc = CryptoJS.AES.encrypt(input.value, key).toString();
+        conn.send(JSON.stringify({ type: 'msg', payload: enc }));
+        appendMessage("YOU", input.value);
+        input.value = "";
     }
 
-    function appendMessage(sender, text) {
+    function appendMessage(s, t) {
         const chat = document.getElementById('chat');
         const div = document.createElement('div');
-        const color = sender === "YOU" ? "#0f0" : (sender === "SYSTEM" ? "#666" : "#00bcd4");
-        div.innerHTML = `<strong style="color:${color}">${sender}:</strong> ${text}`;
-        chat.appendChild(div);
-        chat.scrollTop = chat.scrollHeight;
+        const c = s === "YOU" ? "#0f0" : (s === "SYSTEM" ? "#666" : "#00bcd4");
+        div.innerHTML = `<strong style="color:${c}">${s}:</strong> ${t}`;
+        chat.appendChild(div); chat.scrollTop = chat.scrollHeight;
     }
 
     function triggerPanic() {
         if (conn && conn.open) conn.send(JSON.stringify({ type: 'panic' }));
-        setTimeout(() => location.reload(), 600);
+        setTimeout(() => location.reload(), 800);
     }
 
     function startDestructTimer() {
         if (timerStarted) return;
         timerStarted = true;
-        let timeLeft = 30 * 60;
+        let tl = 30 * 60;
         setInterval(() => {
-            let m = Math.floor(timeLeft / 60), s = timeLeft % 60;
+            let m = Math.floor(tl / 60), s = tl % 60;
             document.getElementById('timer-display').innerText = `WIPE: ${m}:${s<10?'0':''}${s}`;
-            if (timeLeft-- <= 0) location.reload();
+            if (tl-- <= 0) location.reload();
         }, 1000);
     }
 
