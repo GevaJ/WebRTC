@@ -3,63 +3,64 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ghost DEBUGGER</title>
+    <title>Ghost Protocol: Auto-Link</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
     <style>
         body { background: #000; color: #0f0; font-family: monospace; display: flex; flex-direction: column; height: 100vh; margin: 0; }
         .box { border: 1px solid #333; padding: 10px; margin: 5px; background: #111; }
-        input { background: #222; color: #fff; border: 1px solid #555; padding: 5px; width: 100%; margin-bottom: 5px; }
-        button { cursor: pointer; padding: 5px 10px; font-weight: bold; }
+        input { background: #222; color: #fff; border: 1px solid #555; padding: 8px; width: 100%; margin-bottom: 5px; box-sizing: border-box; }
+        button { cursor: pointer; padding: 8px 10px; font-weight: bold; width: 100%; margin-bottom: 5px;}
         .btn-green { background: #0f0; color: #000; border: none; }
         .btn-blue { background: #00bcd4; color: #000; border: none; }
         
-        #logs { flex: 1; overflow-y: scroll; border-top: 2px solid #333; padding: 10px; font-size: 12px; }
-        .log-entry { margin-bottom: 2px; border-bottom: 1px solid #222; }
+        #header-status { background: #330000; color: white; padding: 10px; text-align: center; font-weight: bold; transition: 0.3s; }
+        
+        #logs { flex: 1; overflow-y: scroll; border-top: 2px solid #333; padding: 10px; font-size: 11px; font-family: 'Courier New', monospace; }
+        .log-entry { margin-bottom: 2px; border-bottom: 1px solid #222; word-break: break-all; }
         .log-time { color: #666; margin-right: 5px; }
-        .log-tx { color: #0f0; } /* Transmit */
-        .log-rx { color: #00bcd4; } /* Receive */
-        .log-err { color: #f00; background: #200; } /* Error */
-        .log-sys { color: #ff0; } /* System */
+        .log-tx { color: #0f0; } 
+        .log-rx { color: #00bcd4; } 
+        .log-err { color: #f00; background: #200; } 
+        .log-sys { color: #ff0; } 
     </style>
 </head>
 <body>
 
+<div id="header-status">DISCONNECTED</div>
+
 <div class="box">
-    <h3 style="margin:0 0 10px 0; color:white;">GHOST DEBUG MODE</h3>
+    <label>1. SHARED PASSWORD (Must match):</label>
+    <input type="text" id="password" value="1">
     
-    <label>1. SHARED PASSWORD (Must match exactly):</label>
-    <input type="text" id="password" value="123456"> <label>2. MY ROOM ID (Share this):</label>
-    <div style="display:flex; gap:5px; margin-bottom:5px;">
-        <input type="text" id="my-room" readonly style="background:#000; color:#ff0; font-weight:bold;">
-    </div>
+    <label>2. MY ID (Give this to partner):</label>
+    <input type="text" id="my-room" readonly style="background:#000; color:#ff0; font-weight:bold; text-align:center; font-size:1.2em;">
 
-    <label>3. PARTNER ROOM ID (Paste here to join):</label>
-    <div style="display:flex; gap:5px;">
-        <input type="text" id="target-room" placeholder="Paste ID here...">
-        <button class="btn-blue" onclick="connect()">CONNECT</button>
-    </div>
+    <label>3. PARTNER ID (Paste to join them):</label>
+    <input type="text" id="target-room" placeholder="Optional: Enter their ID here">
+    <button class="btn-blue" onclick="manualConnect()">SWITCH TO PARTNER ID</button>
 </div>
 
-<div id="logs">
-    <div class="log-entry"><span class="log-sys">--- SYSTEM READY ---</span></div>
-</div>
+<div id="logs"></div>
 
 <div class="box" style="display:flex; gap:5px;">
     <input type="text" id="msg-input" placeholder="Type message...">
-    <button class="btn-green" onclick="send()">SEND</button>
+    <button class="btn-green" style="width:auto;" onclick="send()">SEND</button>
 </div>
 
 <script>
-    // --- SETUP ---
+    // --- CONFIG ---
     const API_KEY = 'VCXCEuvhGcBDP7XhiJJUDvR1e1D3eiVjgZ9VRiaV'; 
     const CLUSTER = 'free.blr2.piesocket.com';
     let socket = null;
-    
-    // Generate a random room ID for myself
-    const myRandomId = Math.floor(Math.random() * 90000) + 10000;
-    document.getElementById('my-room').value = myRandomId;
+    let currentRoom = Math.floor(Math.random() * 90000) + 10000;
 
-    // --- LOGGING FUNCTION ---
+    // --- INIT ---
+    window.onload = function() {
+        document.getElementById('my-room').value = currentRoom;
+        log("App loaded. Auto-connecting to MY ID...", "sys");
+        connectSocket(currentRoom); // AUTO CONNECT ON LOAD
+    };
+
     function log(msg, type = "sys") {
         const logs = document.getElementById('logs');
         const div = document.createElement('div');
@@ -70,73 +71,70 @@
         logs.scrollTop = logs.scrollHeight;
     }
 
-    // --- CONNECTION ---
-    function connect() {
-        // 1. Determine which room to use
-        let target = document.getElementById('target-room').value;
-        if (!target) {
-            target = document.getElementById('my-room').value;
-            log(`No partner ID entered. Connecting to MY OWN room: ${target}`, "sys");
+    function manualConnect() {
+        const input = document.getElementById('target-room').value;
+        if(input) {
+            connectSocket(input);
         } else {
-            log(`Connecting to PARTNER room: ${target}`, "sys");
+            log("Enter a Partner ID first.", "err");
+        }
+    }
+
+    function connectSocket(roomId) {
+        if (socket) {
+            log("Closing old connection...", "sys");
+            socket.close();
         }
 
-        const url = `wss://${CLUSTER}/v3/${target}?api_key=${API_KEY}&notify_self=0`;
+        currentRoom = roomId;
+        const url = `wss://${CLUSTER}/v3/${roomId}?api_key=${API_KEY}&notify_self=0`;
         
-        log(`Dialing WebSocket...`, "sys");
-
-        if (socket) { socket.close(); } // Close old connection if exists
+        document.getElementById('header-status').innerText = "CONNECTING...";
+        document.getElementById('header-status').style.background = "#995500";
 
         socket = new WebSocket(url);
 
         socket.onopen = () => {
-            log(`>> WEBSOCKET CONNECTED! (Room: ${target})`, "sys");
-            log(`>> WAITING FOR DATA...`, "sys");
-            document.body.style.boxShadow = "inset 0 0 20px #005500";
+            document.getElementById('header-status').innerText = `CONNECTED: ROOM ${roomId}`;
+            document.getElementById('header-status').style.background = "#006600";
+            log(`>> ONLINE. Listening on Channel: ${roomId}`, "sys");
         };
 
         socket.onerror = (e) => {
-            log(`!! SOCKET ERROR. Check Console. blocked by Tor?`, "err");
-            console.error(e);
-        };
-
-        socket.onclose = () => {
-            log(`!! SOCKET DISCONNECTED.`, "err");
-            document.body.style.boxShadow = "none";
+            document.getElementById('header-status').innerText = "CONNECTION ERROR";
+            document.getElementById('header-status').style.background = "#aa0000";
+            log(`!! SOCKET ERROR.`, "err");
         };
 
         socket.onmessage = (event) => {
-            // STEP A: Raw Data Received
-            log(`RX RAW PACKET: Length ${event.data.length}`, "rx");
+            // Log the raw data so we can see what it is
+            log(`RAW RX: ${event.data}`, "sys");
             
             try {
                 const data = JSON.parse(event.data);
                 
                 if (data.type === 'msg') {
-                    // STEP B: Attempt Decrypt
                     const pass = document.getElementById('password').value;
-                    log(`Attempting Decrypt with pass: "${pass}"...`, "sys");
-                    
                     try {
                         const bytes = CryptoJS.AES.decrypt(data.payload, pass);
                         const txt = bytes.toString(CryptoJS.enc.Utf8);
                         
                         if (txt) {
-                            log(`>> SUCCESS DECRYPTED: "${txt}"`, "rx");
+                            log(`DECRYPTED MSG: "${txt}"`, "rx");
                         } else {
-                            log(`!! DECRYPT EMPTY. WRONG PASSWORD?`, "err");
+                            log(`!! DECRYPT FAILED (Empty). Check Password.`, "err");
                         }
                     } catch (err) {
-                        log(`!! DECRYPT CRASH: ${err.message}`, "err");
+                        log(`!! DECRYPT ERROR: ${err.message}`, "err");
                     }
                 }
             } catch (e) {
-                log(`!! JSON PARSE ERROR: ${e.message}`, "err");
+                // Usually system messages from PieSocket are not JSON
+                log(`(Non-JSON System Packet ignored)`, "sys");
             }
         };
     }
 
-    // --- SENDING ---
     function send() {
         const text = document.getElementById('msg-input').value;
         const pass = document.getElementById('password').value;
@@ -146,11 +144,10 @@
             return;
         }
 
-        log(`Encrypting "${text}" with "${pass}"...`, "sys");
         const enc = CryptoJS.AES.encrypt(text, pass).toString();
-        
         socket.send(JSON.stringify({ type: 'msg', payload: enc }));
-        log(`>> SENT PACKET (Size: ${enc.length})`, "tx");
+        
+        log(`>> SENT: "${text}" (Encrypted)`, "tx");
         document.getElementById('msg-input').value = "";
     }
 </script>
