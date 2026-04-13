@@ -43,9 +43,17 @@
         #chat div { margin-bottom: 8px; line-height: 1.4; }
 
         .input-group { display: flex; gap: 5px; }
+        .attach-input { display: none; }
         input {
             flex: 1; background: #000; color: #0f0; border: 1px solid #444;
             padding: 12px; font-size: 16px; border-radius: 4px; font-family: monospace; outline: none;
+        }
+        .chat-image {
+            display: block;
+            max-width: min(280px, 100%);
+            margin-top: 8px;
+            border: 1px solid #333;
+            border-radius: 4px;
         }
         ::placeholder { color: #00ff00; opacity: 1; font-weight: bold; }
         
@@ -83,6 +91,8 @@
 
 <footer>
     <div class="input-group">
+        <input type="file" id="image-input" class="attach-input" accept="image/*">
+        <button class="action-btn" onclick="pickImage()">IMG</button>
         <input type="text" id="message-input" placeholder="Type /clear or message..." autocomplete="off">
         <button class="send-btn" onclick="sendMessage()">SEND</button>
     </div>
@@ -93,6 +103,13 @@
     let conn;
     let timerStarted = false;
     let currentPeerId = "";
+    let localKeyPair = null;
+    let sharedKey = null;
+    let secureReady = false;
+    let secureInitStarted = false;
+    let wipeTimerId = null;
+    let isWiping = false;
+    const MAX_IMAGE_BYTES = 1024 * 1024;
 
     function playHackerSound() {
         try {
@@ -120,8 +137,126 @@
     document.getElementById('my-id-input').addEventListener('keypress', (e) => {
         if (e.key === 'Enter') { e.preventDefault(); applyMyId(); }
     });
+    document.getElementById('image-input').addEventListener('change', (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (file) sendImage(file);
+    });
 
     initPeer();
+
+    function toBase64(bytes) {
+        let binary = "";
+        const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+        view.forEach((b) => { binary += String.fromCharCode(b); });
+        return btoa(binary);
+    }
+
+    function fromBase64(base64) {
+        const binary = atob(base64);
+        return Uint8Array.from(binary, (c) => c.charCodeAt(0));
+    }
+
+    async function createSessionKeyPair() {
+        return crypto.subtle.generateKey(
+            { name: 'ECDH', namedCurve: 'P-256' },
+            true,
+            ['deriveKey']
+        );
+    }
+
+    async function exportSessionPublicKey(keyPair) {
+        const raw = await crypto.subtle.exportKey('raw', keyPair.publicKey);
+        return toBase64(raw);
+    }
+
+    async function importRemotePublicKey(base64) {
+        return crypto.subtle.importKey(
+            'raw',
+            fromBase64(base64),
+            { name: 'ECDH', namedCurve: 'P-256' },
+            false,
+            []
+        );
+    }
+
+    async function deriveSharedKey(remotePublicKey) {
+        return crypto.subtle.deriveKey(
+            { name: 'ECDH', public: remotePublicKey },
+            localKeyPair.privateKey,
+            { name: 'AES-GCM', length: 256 },
+            false,
+            ['encrypt', 'decrypt']
+        );
+    }
+
+    async function encryptMessage(text) {
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const encoded = new TextEncoder().encode(text);
+        const cipher = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, sharedKey, encoded);
+        return { iv: toBase64(iv), payload: toBase64(cipher) };
+    }
+
+    async function decryptMessage(payload, iv) {
+        const plain = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv: fromBase64(iv) },
+            sharedKey,
+            fromBase64(payload)
+        );
+        return new TextDecoder().decode(plain);
+    }
+
+    function pickImage() {
+        if (isWiping) return;
+        document.getElementById('image-input').click();
+    }
+
+    function readFileAsDataUrl(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(file);
+        });
+    }
+
+    function resetSecureState() {
+        localKeyPair = null;
+        sharedKey = null;
+        secureReady = false;
+        secureInitStarted = false;
+    }
+
+    async function beginSecureHandshake() {
+        if (!conn || !conn.open || secureInitStarted || isWiping) return;
+        secureInitStarted = true;
+        try {
+            localKeyPair = await createSessionKeyPair();
+            const publicKey = await exportSessionPublicKey(localKeyPair);
+            conn.send(JSON.stringify({ type: 'key', payload: publicKey }));
+            appendMessage("SYSTEM", "E2EE HANDSHAKE STARTED");
+        } catch (err) {
+            appendMessage("SYSTEM", "E2EE SETUP FAILED");
+            resetSecureState();
+        }
+    }
+
+    async function finalizeSecureHandshake(remoteKey) {
+        try {
+            if (!localKeyPair) {
+                localKeyPair = await createSessionKeyPair();
+                const publicKey = await exportSessionPublicKey(localKeyPair);
+                if (conn && conn.open) conn.send(JSON.stringify({ type: 'key', payload: publicKey }));
+            }
+            const importedKey = await importRemotePublicKey(remoteKey);
+            sharedKey = await deriveSharedKey(importedKey);
+            secureReady = true;
+            appendMessage("SYSTEM", "END-TO-END ENCRYPTION ACTIVE");
+            if (!timerStarted) startDestructTimer();
+        } catch (err) {
+            appendMessage("SYSTEM", "E2EE HANDSHAKE FAILED");
+            resetSecureState();
+        }
+    }
 
     function buildPeer(id) {
         return new Peer(id, {
@@ -133,6 +268,7 @@
     function initPeer(preferredId) {
         const id = preferredId || Math.random().toString(36).substring(2, 6).toUpperCase();
         currentPeerId = id;
+        resetSecureState();
         document.getElementById('my-id').innerText = "...";
         peer = buildPeer(id);
         peer.on('open', openedId => {
@@ -140,7 +276,11 @@
             document.getElementById('my-id').innerText = openedId;
             document.getElementById('my-id-input').value = openedId;
         });
-        peer.on('connection', c => { conn = c; setupChat(); });
+        peer.on('connection', c => {
+            if (conn && conn !== c) conn.close();
+            conn = c;
+            setupChat(c);
+        });
         peer.on('error', err => appendMessage("SYSTEM", `ID ERROR: ${err.type || 'UNAVAILABLE'}`));
     }
 
@@ -151,6 +291,7 @@
         if (conn && conn.open) conn.close();
         if (peer) peer.destroy();
         conn = null;
+        resetSecureState();
         appendMessage("SYSTEM", `LOCAL ID SET TO ${nextId}`);
         initPeer(nextId);
     }
@@ -158,60 +299,198 @@
     function connectToPeer() {
         const tid = document.getElementById('peer-id-input').value.toUpperCase();
         if(!tid) return;
+        resetSecureState();
         conn = peer.connect(tid);
-        setupChat();
+        setupChat(conn);
     }
 
-    function setupChat() {
-        conn.on('data', (data) => {
-            const p = JSON.parse(data);
-            if (p.type === 'panic') { 
-                document.body.innerHTML = "<h1 style='color:red;text-align:center;margin-top:40vh;'>WIPED</h1>";
-                setTimeout(() => location.reload(), 1000); 
-                return; 
+    function setupChat(activeConn) {
+        if (!activeConn || activeConn._secureSetupDone) return;
+        activeConn._secureSetupDone = true;
+
+        activeConn.on('data', async (data) => {
+            let p;
+            try {
+                p = JSON.parse(data);
+            } catch (err) {
+                return;
             }
-            if (p.type === 'msg') {
-                if (p.payload) { playHackerSound(); visualBlink(); appendMessage("GHOST", p.payload); if (!timerStarted) startDestructTimer(); }
+
+            if (p.type === 'panic') {
+                await wipeSession(false);
+                return;
+            }
+            if (p.type === 'key' && p.payload) {
+                await finalizeSecureHandshake(p.payload);
+                return;
+            }
+            if (p.type === 'msg' && p.payload && p.iv && sharedKey) {
+                try {
+                    const decrypted = await decryptMessage(p.payload, p.iv);
+                    const message = JSON.parse(decrypted);
+                    playHackerSound();
+                    visualBlink();
+                    if (message.kind === 'image' && message.dataUrl) {
+                        appendImageMessage("GHOST", message.dataUrl, message.name || "image");
+                    } else if (message.kind === 'text' && typeof message.text === 'string') {
+                        appendMessage("GHOST", message.text);
+                    } else {
+                        appendMessage("SYSTEM", "UNSUPPORTED MESSAGE");
+                    }
+                    if (!timerStarted) startDestructTimer();
+                } catch (err) {
+                    appendMessage("SYSTEM", "MESSAGE DECRYPT FAILED");
+                }
             }
         });
-        conn.on('open', () => { appendMessage("SYSTEM", "SECURE LINK ESTABLISHED"); startDestructTimer(); });
+        activeConn.on('open', async () => {
+            appendMessage("SYSTEM", "PEER LINK ESTABLISHED");
+            await beginSecureHandshake();
+        });
+        activeConn.on('close', () => {
+            if (conn === activeConn) {
+                conn = null;
+                resetSecureState();
+            }
+        });
     }
 
-    function sendMessage() {
+    async function sendMessage() {
         const input = document.getElementById('message-input');
         
         if (input.value === '/clear') {
-            document.getElementById('chat').innerHTML = '<div class="system-msg">> Screen cleared.</div>';
+            clearChat("> Screen cleared.");
             input.value = ""; return;
         }
 
-        if (!input.value || !conn || !conn.open) return;
-        conn.send(JSON.stringify({ type: 'msg', payload: input.value }));
+        if (!input.value || !conn || !conn.open || !secureReady || !sharedKey) return;
+        const encrypted = await encryptMessage(JSON.stringify({ kind: 'text', text: input.value }));
+        conn.send(JSON.stringify({ type: 'msg', payload: encrypted.payload, iv: encrypted.iv }));
         appendMessage("YOU", input.value);
         input.value = "";
+    }
+
+    async function sendImage(file) {
+        const imageInput = document.getElementById('image-input');
+        try {
+            if (!file || !conn || !conn.open || !secureReady || !sharedKey) return;
+            if (!file.type.startsWith('image/')) {
+                appendMessage("SYSTEM", "ONLY IMAGE FILES ARE ALLOWED");
+                return;
+            }
+            if (file.size > MAX_IMAGE_BYTES) {
+                appendMessage("SYSTEM", "IMAGE TOO LARGE (MAX 1MB)");
+                return;
+            }
+
+            const dataUrl = await readFileAsDataUrl(file);
+            const encrypted = await encryptMessage(JSON.stringify({ kind: 'image', dataUrl, name: file.name }));
+            conn.send(JSON.stringify({ type: 'msg', payload: encrypted.payload, iv: encrypted.iv }));
+            appendImageMessage("YOU", dataUrl, file.name);
+        } catch (err) {
+            appendMessage("SYSTEM", "IMAGE SEND FAILED");
+        } finally {
+            imageInput.value = "";
+        }
+    }
+
+    function clearChat(message) {
+        const chat = document.getElementById('chat');
+        chat.replaceChildren();
+        const div = document.createElement('div');
+        div.className = 'system-msg';
+        div.textContent = message;
+        chat.appendChild(div);
     }
 
     function appendMessage(s, t) {
         const chat = document.getElementById('chat');
         const div = document.createElement('div');
         const c = s === "YOU" ? "#0f0" : (s === "SYSTEM" ? "#666" : "#00bcd4");
-        div.innerHTML = `<strong style="color:${c}">${s}:</strong> ${t}`;
+        const strong = document.createElement('strong');
+        strong.style.color = c;
+        strong.textContent = `${s}:`;
+        div.appendChild(strong);
+        div.appendChild(document.createTextNode(` ${t}`));
         chat.appendChild(div); chat.scrollTop = chat.scrollHeight;
     }
 
+    function appendImageMessage(sender, dataUrl, name) {
+        const chat = document.getElementById('chat');
+        const div = document.createElement('div');
+        const c = sender === "YOU" ? "#0f0" : "#00bcd4";
+        const strong = document.createElement('strong');
+        const label = document.createTextNode(` [image] ${name || ""}`);
+        const img = document.createElement('img');
+        strong.style.color = c;
+        strong.textContent = `${sender}:`;
+        img.className = 'chat-image';
+        img.alt = name || 'image';
+        img.src = dataUrl;
+        div.appendChild(strong);
+        div.appendChild(label);
+        div.appendChild(img);
+        chat.appendChild(div);
+        chat.scrollTop = chat.scrollHeight;
+    }
+
+    async function wipeSession(notifyPeer = true) {
+        if (isWiping) return;
+        isWiping = true;
+
+        try {
+            if (notifyPeer && conn && conn.open) conn.send(JSON.stringify({ type: 'panic' }));
+        } catch (err) {}
+
+        try { if (wipeTimerId) clearInterval(wipeTimerId); } catch (err) {}
+        wipeTimerId = null;
+        timerStarted = false;
+
+        try { localStorage.clear(); } catch (err) {}
+        try { sessionStorage.clear(); } catch (err) {}
+        try { history.replaceState(null, "", location.pathname); } catch (err) {}
+        try {
+            if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText("");
+        } catch (err) {}
+
+        const fields = ['message-input', 'peer-id-input', 'my-id-input', 'my-id', 'timer-display', 'image-input'];
+        fields.forEach((id) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            if ('value' in el) el.value = "";
+            el.textContent = id === 'timer-display' ? "WIPED" : "";
+        });
+
+        clearChat("> Local session wiped.");
+        resetSecureState();
+
+        try { if (conn) conn.close(); } catch (err) {}
+        try { if (peer) peer.destroy(); } catch (err) {}
+        conn = null;
+        peer = null;
+
+        document.body.replaceChildren(Object.assign(document.createElement('div'), {
+            textContent: 'SESSION WIPED'
+        }));
+        document.body.style.display = 'grid';
+        document.body.style.placeItems = 'center';
+        document.body.style.fontSize = '2rem';
+        document.body.style.color = '#f33';
+        document.body.style.background = '#000';
+    }
+
     function triggerPanic() {
-        if (conn && conn.open) conn.send(JSON.stringify({ type: 'panic' }));
-        setTimeout(() => location.reload(), 800);
+        wipeSession(true);
     }
 
     function startDestructTimer() {
         if (timerStarted) return;
         timerStarted = true;
         let tl = 30 * 60;
-        setInterval(() => {
+        wipeTimerId = setInterval(() => {
             let m = Math.floor(tl / 60), s = tl % 60;
             document.getElementById('timer-display').innerText = `WIPE: ${m}:${s<10?'0':''}${s}`;
-            if (tl-- <= 0) location.reload();
+            if (tl-- <= 0) wipeSession(true);
         }, 1000);
     }
 
