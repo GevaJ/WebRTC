@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Ghost Protocol v5 - Final</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
     <style>
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         body { 
@@ -34,6 +33,7 @@
             display: flex; align-items: center; justify-content: space-between;
             background: #151515; padding: 10px; border-radius: 4px; border: 1px solid #333;
         }
+        .id-row strong { color:#fff; font-size:1.2em; }
         .copy-btn {
             background: #00cc00; color: #000; border: none; padding: 5px 15px;
             font-weight: bold; cursor: pointer; border-radius: 3px;
@@ -66,10 +66,13 @@
 
 <div class="config-area">
     <div class="id-row">
-        <span>MY ID: <strong id="my-id" style="color:#fff; font-size:1.2em;">...</strong></span>
+        <span>MY ID: <strong id="my-id">...</strong></span>
         <button class="copy-btn" onclick="copyId()">COPY</button>
     </div>
-    <input type="password" id="secret-key" placeholder="PASSWORD KEY">
+    <div class="input-group">
+        <input type="text" id="my-id-input" placeholder="SET MY ID (OPTIONAL)" maxlength="24" autocomplete="off">
+        <button class="action-btn" onclick="applyMyId()">SET ID</button>
+    </div>
     <div class="input-group">
         <input type="text" id="peer-id-input" placeholder="PARTNER ID">
         <button class="action-btn" onclick="connectToPeer()">LINK</button>
@@ -86,16 +89,10 @@
 </footer>
 
 <script>
-    const shortId = Math.random().toString(36).substring(2, 6).toUpperCase();
-    
-    // Tor/VPN Friendly Config
-    const peer = new Peer(shortId, {
-        config: { 'iceServers': [{ url: 'stun:stun.l.google.com:19302' }, { url: 'stun:stun1.l.google.com:19302' }] },
-        debug: 0
-    });
-
+    let peer;
     let conn;
     let timerStarted = false;
+    let currentPeerId = "";
 
     function playHackerSound() {
         try {
@@ -120,9 +117,43 @@
     document.getElementById('message-input').addEventListener('keypress', (e) => {
         if (e.key === 'Enter') { e.preventDefault(); sendMessage(); }
     });
+    document.getElementById('my-id-input').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); applyMyId(); }
+    });
 
-    peer.on('open', id => document.getElementById('my-id').innerText = id);
-    peer.on('connection', c => { conn = c; setupChat(); });
+    initPeer();
+
+    function buildPeer(id) {
+        return new Peer(id, {
+            config: { 'iceServers': [{ url: 'stun:stun.l.google.com:19302' }, { url: 'stun:stun1.l.google.com:19302' }] },
+            debug: 0
+        });
+    }
+
+    function initPeer(preferredId) {
+        const id = preferredId || Math.random().toString(36).substring(2, 6).toUpperCase();
+        currentPeerId = id;
+        document.getElementById('my-id').innerText = "...";
+        peer = buildPeer(id);
+        peer.on('open', openedId => {
+            currentPeerId = openedId;
+            document.getElementById('my-id').innerText = openedId;
+            document.getElementById('my-id-input').value = openedId;
+        });
+        peer.on('connection', c => { conn = c; setupChat(); });
+        peer.on('error', err => appendMessage("SYSTEM", `ID ERROR: ${err.type || 'UNAVAILABLE'}`));
+    }
+
+    function applyMyId() {
+        const input = document.getElementById('my-id-input');
+        const nextId = input.value.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 24);
+        if (!nextId || nextId === currentPeerId) return;
+        if (conn && conn.open) conn.close();
+        if (peer) peer.destroy();
+        conn = null;
+        appendMessage("SYSTEM", `LOCAL ID SET TO ${nextId}`);
+        initPeer(nextId);
+    }
 
     function connectToPeer() {
         const tid = document.getElementById('peer-id-input').value.toUpperCase();
@@ -140,10 +171,7 @@
                 return; 
             }
             if (p.type === 'msg') {
-                const key = document.getElementById('secret-key').value;
-                const b = CryptoJS.AES.decrypt(p.payload, key);
-                const txt = b.toString(CryptoJS.enc.Utf8);
-                if (txt) { playHackerSound(); visualBlink(); appendMessage("GHOST", txt); if (!timerStarted) startDestructTimer(); }
+                if (p.payload) { playHackerSound(); visualBlink(); appendMessage("GHOST", p.payload); if (!timerStarted) startDestructTimer(); }
             }
         });
         conn.on('open', () => { appendMessage("SYSTEM", "SECURE LINK ESTABLISHED"); startDestructTimer(); });
@@ -151,16 +179,14 @@
 
     function sendMessage() {
         const input = document.getElementById('message-input');
-        const key = document.getElementById('secret-key').value;
         
         if (input.value === '/clear') {
             document.getElementById('chat').innerHTML = '<div class="system-msg">> Screen cleared.</div>';
             input.value = ""; return;
         }
 
-        if (!key || !input.value || !conn || !conn.open) return;
-        const enc = CryptoJS.AES.encrypt(input.value, key).toString();
-        conn.send(JSON.stringify({ type: 'msg', payload: enc }));
+        if (!input.value || !conn || !conn.open) return;
+        conn.send(JSON.stringify({ type: 'msg', payload: input.value }));
         appendMessage("YOU", input.value);
         input.value = "";
     }
